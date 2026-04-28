@@ -64,6 +64,15 @@ public class PlayerAttacks : MonoBehaviour
     [Header("Smash Attack")]
     public float smashInputWindow = 0.12f;
 
+    [Header("Dash Attack")]
+    public float dashAttackTapWindow = 0.16f;
+    public float dashAttackMinSpeed = 2.2f;
+
+    [Header("Attack Momentum")]
+    public float jabMomentum = 3.8f;
+    public float tiltMomentum = 5.2f;
+    public float dashAttackMomentum = 8.5f;
+
     private bool isAttacking;
     private bool isGrounded;
     private bool isDashing;
@@ -139,6 +148,9 @@ public class PlayerAttacks : MonoBehaviour
         bool holdingDown = Input.GetKey(KeyCode.S);
         bool holdingHorizontal = holdingLeft || holdingRight;
 
+        if (holdingHorizontal && ShouldDashAttack(holdingLeft, holdingRight))
+            return AttackType.DashAttack;
+
         if (holdingHorizontal && WasRecentlyPressed(holdingLeft ? aPressTime : dPressTime))
         {
             if(isDashing)
@@ -199,6 +211,26 @@ public class PlayerAttacks : MonoBehaviour
         return Time.time - pressTime <= smashInputWindow;
     }
 
+    private bool WasRecentlyPressed(float pressTime, float window)
+    {
+        return Time.time - pressTime <= window;
+    }
+
+    private bool ShouldDashAttack(bool holdingLeft, bool holdingRight)
+    {
+        float inputDir = holdingRight ? 1f : -1f;
+        float pressTime = holdingRight ? dPressTime : aPressTime;
+        bool tappedForward = WasRecentlyPressed(pressTime, dashAttackTapWindow);
+
+        bool movingForwardFast = false;
+        if (rb != null)
+        {
+            movingForwardFast = Mathf.Abs(rb.linearVelocity.x) >= dashAttackMinSpeed && Mathf.Sign(rb.linearVelocity.x) == inputDir;
+        }
+
+        return tappedForward || movingForwardFast || isDashing;
+    }
+
     private void PerformAttack(AttackType type)
     {
         currentAttackData = GetAttackData(type);
@@ -231,7 +263,34 @@ public class PlayerAttacks : MonoBehaviour
             spriteRenderer.sprite = currentAttackData.sprite;
         }
 
+        ApplyAttackMomentum(type);
         OnAttackStarted(type);
+    }
+
+    private void ApplyAttackMomentum(AttackType type)
+    {
+        if (rb == null)
+            return;
+
+        float facing = GetFacingDirection();
+        Vector2 v = rb.linearVelocity;
+        float minForwardSpeed = 0f;
+
+        if (type == AttackType.DashAttack)
+            minForwardSpeed = dashAttackMomentum;
+        else if (type == AttackType.ForwardTilt || type == AttackType.ForwardAir || type == AttackType.ForwardSmash)
+            minForwardSpeed = tiltMomentum;
+        else if (type == AttackType.Jab || type == AttackType.NeutralAir)
+            minForwardSpeed = jabMomentum;
+
+        if (minForwardSpeed > 0f)
+        {
+            float targetX = facing * minForwardSpeed;
+            if (Mathf.Abs(v.x) < Mathf.Abs(targetX) || Mathf.Sign(v.x) != Mathf.Sign(targetX))
+                v.x = targetX;
+        }
+
+        rb.linearVelocity = v;
     }
 
     private void UpdateAttackTimers()

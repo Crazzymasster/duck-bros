@@ -16,10 +16,11 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private LayerMask groundLayer;
 
     [Header("Horizontal Movement")]
-    [SerializeField] private float maxRunSpeed = 0f;
-    [SerializeField] private float groundAcceleration = 60f;
-    [SerializeField] private float airAcceleration = 30f;
-    [SerializeField] private float groundFriction = 40f;
+    [SerializeField] private float maxRunSpeed = 12f;
+    [SerializeField] private float groundAcceleration = 90f;
+    [SerializeField] private float groundReverseBoost = 1.3f;
+    [SerializeField] private float airAcceleration = 40f;
+    [SerializeField] private float groundFriction = 50f;
 
     [Header("Falling")]
     [SerializeField] private float gravityScale = 3f;
@@ -28,15 +29,16 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float fastFallThreshold = -2f;
 
     [Header("Wall Jump")]
-    [SerializeField] private float wallCheckDistance = 0.3f;
-    [SerializeField] private float wallSlideMaxSpeed = -2f;
-    [SerializeField] private float wallJumpHorizontalVelocity = 10f;
-    [SerializeField] private float wallJumpVerticalVelocity = 14f;
+    [SerializeField] private float wallSlideMaxSpeed = -3f;
+    [SerializeField] private float wallJumpHorizontalVelocity = 11f;
+    [SerializeField] private float wallJumpVerticalVelocity = 15f;
     [SerializeField] private float sideContactThreshold = 0.65f;
+    [SerializeField] private float wallDetachLockTime = 0.4f;
+    [SerializeField] private float wallReEngageDelay = 0.15f;
 
     [Header("Attack Sync")]
     [SerializeField] private PlayerAttacks playerAttacks;
-    [SerializeField] private float attackMoveMultiplier = 0.35f;
+    [SerializeField] private float attackMoveMultiplier = 0.8f;
     [SerializeField] private float dashSpeedThreshold = 7f;
     [SerializeField] private float dashInputThreshold = 0.7f;
 
@@ -54,6 +56,9 @@ public class PlayerMovement : MonoBehaviour
     private float lastGroundedTime = -10f;
     private SpriteRenderer mySpriteRenderer;
     private bool isDashing;
+    private float wallDetachTimer;
+    private float wallReEngageTimer;
+    private int lastWallJumpDir;  // Track which wall direction we jumped from
 
     public Transform Weapon;
     private SpriteRenderer GunSprites;
@@ -78,7 +83,7 @@ public class PlayerMovement : MonoBehaviour
 
     private void Update()
     {
-        inputX = Input.GetAxisRaw("Horizontal");
+        inputX = Input.GetAxis("Horizontal");
         inputY = Input.GetAxisRaw("Vertical");
         
         jumpPressed = Input.GetButtonDown("Jump");
@@ -102,6 +107,12 @@ public class PlayerMovement : MonoBehaviour
 
     private void FixedUpdate()
     {
+        if (wallDetachTimer > 0f)
+            wallDetachTimer -= Time.fixedDeltaTime;
+
+        if (wallReEngageTimer > 0f)
+            wallReEngageTimer -= Time.fixedDeltaTime;
+
         CheckGrounded();
         UpdateLocomotionStateForCombat();
         HandleHorizontalMovement();
@@ -154,25 +165,33 @@ public class PlayerMovement : MonoBehaviour
     {
         Vector2 v = rb.linearVelocity;
 
-        if (jumpPressed && isOnWall && !isGrounded)
+        bool coyoteOK = (Time.time - lastGroundedTime) <= coyoteTime;
+        bool bufferedJump = (Time.time - lastJumpPressedTime) <= jumpBufferTime;
+
+        // Wall jump (uses bufferedJump, not just jumpPressed, so you can hold space from ground jump and still wall jump)
+        if (bufferedJump && isOnWall && !isGrounded)
         {
             v.x = wallJumpHorizontalVelocity * -wallDirX;
             v.y = wallJumpVerticalVelocity;
 
+            lastWallJumpDir = wallDirX;  // Remember which wall we jumped from
             isOnWall = false;
-            jumpsUsed = 1;
+            wallDirX = 0;
+            wallDetachTimer = wallDetachLockTime;
+            wallReEngageTimer = wallReEngageDelay;
+            jumpsUsed = 0;  // Wall jump resets air jumps (Smash Bros behavior)
+            lastJumpPressedTime = -10f;
             rb.linearVelocity = v;
             return;
         }
-
-        bool coyoteOK = (Time.time - lastGroundedTime) <= coyoteTime;
-        bool bufferedJump = (Time.time - lastJumpPressedTime) <= jumpBufferTime;
 
         if (bufferedJump && (isGrounded || coyoteOK || jumpsUsed < maxJumps))
         {
             v.y = jumpVelocity;
             jumpsUsed++;
             lastJumpPressedTime = -10f;
+            if (isGrounded)
+                isGrounded = false;
         }
 
         if (!jumpHeld && v.y > 0f)
@@ -187,7 +206,7 @@ public class PlayerMovement : MonoBehaviour
     {
         Vector2 v = rb.linearVelocity;
 
-        if (!isGrounded && inputY < -0.5f && v.y < 0f)
+        if (!isGrounded && inputY < -0.5f && v.y < fastFallThreshold)
         {
             fastFalling = true;
         }
@@ -209,21 +228,37 @@ public class PlayerMovement : MonoBehaviour
 
     private void HandleHorizontalMovement()
     {
-        if (isOnWall && !isGrounded)
+        // Only allow wall stick if: on wall, airborne, past detach grace, inputting into wall, and NOT in re-engage grace period
+        bool isWallSticking = isOnWall && !isGrounded && wallDetachTimer <= 0f && wallReEngageTimer <= 0f && 
+                              Mathf.Abs(inputX) > 0.05f && Mathf.Sign(inputX) == wallDirX;
+        if (isWallSticking)
+        {
+            rb.linearVelocity = new Vector2(0f, rb.linearVelocity.y);
             return;
+        }
 
         float attackMultiplier = 1f;
-        if (playerAttacks != null && playerAttacks.IsAttacking)
+        if (playerAttacks != null && playerAttacks.IsAttacking && isGrounded)
             attackMultiplier = attackMoveMultiplier;
 
         float targetSpeed = inputX * maxRunSpeed * attackMultiplier;
-        float speedDiff = targetSpeed - rb.linearVelocity.x;
+        float currentSpeed = rb.linearVelocity.x;
+        float speedDiff = targetSpeed - currentSpeed;
 
-        float accel = isGrounded ? groundAcceleration : airAcceleration;
+        // Apply direction-reversal boost for snappier feel
+        float accel = groundAcceleration;
+        if (isGrounded && Mathf.Abs(inputX) > 0.05f && Mathf.Sign(inputX) != Mathf.Sign(currentSpeed))
+        {
+            accel *= groundReverseBoost;  // 1.3x faster when turning
+        }
+        
+        if (!isGrounded)
+            accel = airAcceleration;
+
         float movement = speedDiff * accel * Time.fixedDeltaTime;
-
         rb.linearVelocity += new Vector2(movement, 0f);
 
+        // Smooth friction when not inputting on ground
         if (isGrounded && Mathf.Approximately(inputX, 0f))
         {
             float newX = Mathf.MoveTowards(
@@ -234,7 +269,7 @@ public class PlayerMovement : MonoBehaviour
             rb.linearVelocity = new Vector2(newX, rb.linearVelocity.y);
         }
 
-        // optional: clamp to maxRunSpeed
+        // Clamp to maxRunSpeed
         float clampedX = Mathf.Clamp(rb.linearVelocity.x, -maxRunSpeed, maxRunSpeed);
         rb.linearVelocity = new Vector2(clampedX, rb.linearVelocity.y);
     }
@@ -242,8 +277,8 @@ public class PlayerMovement : MonoBehaviour
     // Contact-normal based wall detection (works even if ground and walls are the same GameObject)
     private void OnCollisionStay2D(Collision2D col)
     {
-        // if grounded then prefer ground state over wall
-        if (isGrounded)
+        // if grounded or in detach grace, skip wall detection
+        if (isGrounded || wallDetachTimer > 0f)
             return;
 
         foreach (ContactPoint2D cp in col.contacts)
@@ -262,9 +297,17 @@ public class PlayerMovement : MonoBehaviour
             if (Mathf.Abs(n.x) > sideContactThreshold && n.y < 0.65f)
             {
                 // determine wall side using contact point relative to player position
-                wallDirX = (cp.point.x < transform.position.x) ? -1 : 1;
-                isOnWall = true;
-                return;
+                int newWallDir = (cp.point.x < transform.position.x) ? -1 : 1;
+                
+                // Only block re-engagement if we're trying to stick to the same wall we just jumped from
+                bool isReEngage = wallReEngageTimer > 0f && newWallDir == lastWallJumpDir;
+                
+                if (!isReEngage)
+                {
+                    wallDirX = newWallDir;
+                    isOnWall = true;
+                    return;
+                }
             }
         }
     }
@@ -272,8 +315,12 @@ public class PlayerMovement : MonoBehaviour
     private void OnCollisionExit2D(Collision2D col)
     {
         // leaving contacts, clear wall state (simple approach)
-        isOnWall = false;
-        wallDirX = 0;
+        if (wallDetachTimer <= 0f)
+        {
+            isOnWall = false;
+            wallDirX = 0;
+            lastWallJumpDir = 0;  // Clear the jump wall memory when leaving all contact
+        }
     }
 
     private void HandleWallSlide()
@@ -281,12 +328,23 @@ public class PlayerMovement : MonoBehaviour
         if (!isOnWall || isGrounded)
             return;
 
-        Vector2 v = rb.linearVelocity;
-        v.x = 0f;
+        // Skip slide only if we're still in detach grace on the SAME wall we just jumped from
+        bool isBlockedBySameWall = wallDetachTimer > 0f && wallDirX == lastWallJumpDir;
+        if (isBlockedBySameWall)
+            return;
 
+        // Don't stick if holding away from wall
+        if (Mathf.Abs(inputX) > 0.05f && Mathf.Sign(inputX) != wallDirX)
+            return;
+
+        Vector2 v = rb.linearVelocity;
+        v.x = 0f;  // Kill horizontal movement completely
+
+        // Cap downward velocity smoothly when wall sliding
         if (v.y < wallSlideMaxSpeed)
         {
-            v.y = wallSlideMaxSpeed;
+            // Lerp towards max speed for smooth deceleration
+            v.y = Mathf.Lerp(v.y, wallSlideMaxSpeed, Time.fixedDeltaTime * 8f);
         }
 
         rb.linearVelocity = v;
