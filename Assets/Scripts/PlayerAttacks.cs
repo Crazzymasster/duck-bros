@@ -22,10 +22,19 @@ public enum AttackType
     DownAir
 }
 
+public enum AttackCategory
+{
+    Light,      // Jabs and Tilts - fast, low knockback
+    Heavy,      // Smashes - slow, high knockback
+    Aerial,     // Air attacks
+    Special     // For future special moves
+}
+
 [System.Serializable]
 public class AttackData
 {
     public AttackType type;
+    public AttackCategory category;
     public Sprite sprite;
     public Sprite[] animationFrames;
     public float animationFps = 16f;
@@ -58,15 +67,18 @@ public class PlayerAttacks : MonoBehaviour
     [Header("Movement Sync")]
     public PlayerMovement movementController;
 
-    [Header("Attack Key")]
-    public KeyCode attackKey = KeyCode.Space;
+    [Header("Attack Input - New Categorized System")]
+    [SerializeField] private KeyCode lightAttackKey = KeyCode.X;      // Jabs & Tilts
+    [SerializeField] private KeyCode heavyAttackKey = KeyCode.C;      // Smashes & Power moves
+    [SerializeField] private KeyCode specialAttackKey = KeyCode.V;    // Reserved for future
 
-    [Header("Smash Attack")]
-    public float smashInputWindow = 0.12f;
+    [Header("Heavy Attack (Smash) Timing")]
+    public float smashChargeWindow = 0.12f;      // Hold to build power
 
     [Header("Dash Attack")]
-    public float dashAttackTapWindow = 0.16f;
     public float dashAttackMinSpeed = 2.2f;
+    [Tooltip("Enable velocity-based dash attack (no tap timing required)")]
+    public bool useVelocityDashAttack = true;
 
     [Header("Attack Momentum")]
     public float jabMomentum = 3.8f;
@@ -77,6 +89,7 @@ public class PlayerAttacks : MonoBehaviour
     private bool isGrounded;
     private bool isDashing;
     private AttackType currentAttack;
+    private AttackCategory currentCategory;
     private float attackTimer;
     private float endLagTimer;
     private bool hitboxActive;
@@ -91,6 +104,7 @@ public class PlayerAttacks : MonoBehaviour
 
     public bool IsAttacking => isAttacking || endLagTimer > 0f;
     public AttackType CurrentAttack => currentAttack;
+    public AttackCategory CurrentCategory => currentCategory;
 
     void Start()
     {
@@ -125,61 +139,102 @@ public class PlayerAttacks : MonoBehaviour
 
     private void HandleAttackInput()
     {
-        if (!Input.GetKeyDown(attackKey)) return;
         if (isAttacking || endLagTimer > 0f) return;
 
-        AttackType attackToPerform = DetermineAttackType();
-        PerformAttack(attackToPerform);
+        // Light Attack: Jabs and Tilts
+        if (Input.GetKeyDown(lightAttackKey))
+        {
+            AttackType attackToPerform = DetermineLightAttack();
+            PerformAttack(attackToPerform, AttackCategory.Light);
+            return;
+        }
+
+        // Heavy Attack: Smashes and power moves
+        if (Input.GetKeyDown(heavyAttackKey))
+        {
+            AttackType attackToPerform = DetermineHeavyAttack();
+            PerformAttack(attackToPerform, AttackCategory.Heavy);
+            return;
+        }
+
+        // Special Attack: Reserved for future special move system
+        if (Input.GetKeyDown(specialAttackKey))
+        {
+            // TODO: Implement special moves in future
+            return;
+        }
     }
 
-    private AttackType DetermineAttackType()
+    /// <summary>
+    /// Light Attacks - Fast attacks with low knockback
+    /// Neutral = Jab
+    /// Forward = Forward Tilt
+    /// Up = Up Tilt
+    /// Down = Down Tilt
+    /// Dash Attack = Moving fast + any direction
+    /// </summary>
+    private AttackType DetermineLightAttack()
     {
-        if (isGrounded)
-            return DetermineGroundAttack();
-        else
+        if (!isGrounded)
             return DetermineAerialAttack();
-    }
 
-    private AttackType DetermineGroundAttack()
-    {
         bool holdingLeft = Input.GetKey(KeyCode.A);
         bool holdingRight = Input.GetKey(KeyCode.D);
         bool holdingUp = Input.GetKey(KeyCode.W);
         bool holdingDown = Input.GetKey(KeyCode.S);
         bool holdingHorizontal = holdingLeft || holdingRight;
 
-        if (holdingHorizontal && ShouldDashAttack(holdingLeft, holdingRight))
+        // Dash attack if moving fast (velocity-based, no timing needed!)
+        if (holdingHorizontal && IsMovingFastEnough())
             return AttackType.DashAttack;
 
-        if (holdingHorizontal && WasRecentlyPressed(holdingLeft ? aPressTime : dPressTime))
-        {
-            if(isDashing)
-                return AttackType.DashAttack;
-            
-            return AttackType.ForwardSmash;
-        }
-
-        if (holdingUp && WasRecentlyPressed(wPressTime))
-            return AttackType.UpSmash;
-
-        if (holdingDown && WasRecentlyPressed(sPressTime))
-            return AttackType.DownSmash;
-        
+        // Forward Tilt
         if (holdingHorizontal)
-        {
-            if (isDashing)
-                return AttackType.DashAttack;
-
             return AttackType.ForwardTilt;
-        }
 
+        // Up Tilt
         if (holdingUp)
             return AttackType.UpTilt;
-        
+
+        // Down Tilt
         if (holdingDown)
             return AttackType.DownTilt;
-        
+
+        // Neutral Jab (default)
         return AttackType.Jab;
+    }
+
+    /// <summary>
+    /// Heavy Attacks - Powerful attacks with high knockback
+    /// Neutral = Neutral (nothing happens - can implement later)
+    /// Forward = Forward Smash
+    /// Up = Up Smash
+    /// Down = Down Smash
+    /// </summary>
+    private AttackType DetermineHeavyAttack()
+    {
+        if (!isGrounded)
+            return DetermineAerialAttack();
+
+        bool holdingLeft = Input.GetKey(KeyCode.A);
+        bool holdingRight = Input.GetKey(KeyCode.D);
+        bool holdingUp = Input.GetKey(KeyCode.W);
+        bool holdingDown = Input.GetKey(KeyCode.S);
+
+        // Forward Smash
+        if (holdingLeft || holdingRight)
+            return AttackType.ForwardSmash;
+
+        // Up Smash
+        if (holdingUp)
+            return AttackType.UpSmash;
+
+        // Down Smash
+        if (holdingDown)
+            return AttackType.DownSmash;
+
+        // Neutral: Use Forward Smash as default since we have no neutral heavy
+        return AttackType.ForwardSmash;
     }
 
     private AttackType DetermineAerialAttack()
@@ -208,7 +263,7 @@ public class PlayerAttacks : MonoBehaviour
     
     private bool WasRecentlyPressed(float pressTime)
     {
-        return Time.time - pressTime <= smashInputWindow;
+        return Time.time - pressTime <= smashChargeWindow;
     }
 
     private bool WasRecentlyPressed(float pressTime, float window)
@@ -216,22 +271,15 @@ public class PlayerAttacks : MonoBehaviour
         return Time.time - pressTime <= window;
     }
 
-    private bool ShouldDashAttack(bool holdingLeft, bool holdingRight)
+    private bool IsMovingFastEnough()
     {
-        float inputDir = holdingRight ? 1f : -1f;
-        float pressTime = holdingRight ? dPressTime : aPressTime;
-        bool tappedForward = WasRecentlyPressed(pressTime, dashAttackTapWindow);
+        if (rb == null)
+            return false;
 
-        bool movingForwardFast = false;
-        if (rb != null)
-        {
-            movingForwardFast = Mathf.Abs(rb.linearVelocity.x) >= dashAttackMinSpeed && Mathf.Sign(rb.linearVelocity.x) == inputDir;
-        }
-
-        return tappedForward || movingForwardFast || isDashing;
+        return Mathf.Abs(rb.linearVelocity.x) >= dashAttackMinSpeed;
     }
 
-    private void PerformAttack(AttackType type)
+    private void PerformAttack(AttackType type, AttackCategory category = AttackCategory.Light)
     {
         currentAttackData = GetAttackData(type);
 
@@ -245,6 +293,7 @@ public class PlayerAttacks : MonoBehaviour
 
         isAttacking = true;
         currentAttack = type;
+        currentCategory = category;
         attackTimer = currentAttackData.duration;
         hitboxActive = false;
 
@@ -328,6 +377,7 @@ public class PlayerAttacks : MonoBehaviour
         isAttacking = false;
         hitboxActive = false;
         currentAttack = AttackType.None;
+        currentCategory = AttackCategory.Light;
         endLagTimer = endLag;
 
         if(spriteRenderer != null && defaultSprite != null)

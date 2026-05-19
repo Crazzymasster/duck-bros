@@ -2353,6 +2353,7 @@ GameObject:
   - component: {fileID: 878605012}
   - component: {fileID: 878605013}
   - component: {fileID: 878605014}
+  - component: {fileID: 878605015}
   m_Layer: 0
   m_Name: Player
   m_TagString: Untagged
@@ -2531,17 +2532,19 @@ MonoBehaviour:
     m_Bits: 8
   maxRunSpeed: 10
   groundAcceleration: 6
+  groundReverseBoost: 1.3
   airAcceleration: 30
   groundFriction: 40
   gravityScale: 3
   FastFallGravityScale: 5
   maxFallSpeed: -20
   fastFallThreshold: -2
-  wallCheckDistance: 0.3
   wallSlideMaxSpeed: -2
   wallJumpHorizontalVelocity: 10
   wallJumpVerticalVelocity: 14
   sideContactThreshold: 0.65
+  wallDetachLockTime: 0.12
+  wallReEngageDelay: 0.18
   playerAttacks: {fileID: 878605013}
   attackMoveMultiplier: 0.35
   dashSpeedThreshold: 7
@@ -2585,6 +2588,11 @@ MonoBehaviour:
   movementController: {fileID: 878605012}
   attackKey: 120
   smashInputWindow: 0.12
+  dashAttackTapWindow: 0.16
+  dashAttackMinSpeed: 2.2
+  jabMomentum: 3.8
+  tiltMomentum: 5.2
+  dashAttackMomentum: 8.5
 --- !u!114 &878605014
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2601,6 +2609,30 @@ MonoBehaviour:
   sourceSpriteSheet: {fileID: -1956451927496152413, guid: eb4a3b770cc55fb428886b5587d5c19c, type: 3}
   framePrefix: left_jab_
   targetAttackType: 1
+--- !u!114 &878605015
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 878605007}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f48be71ef8708da4d9b98eabc9d517a3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  playerMovement: {fileID: 0}
+  playerAttacks: {fileID: 0}
+  rb: {fileID: 0}
+  enableDebugDisplay: 1
+  textColor: {r: 1, g: 1, b: 1, a: 1}
+  fontSize: 40
+  displayX: 10
+  displayY: 10
+  displayWidth: 550
+  displayHeight: 700
+  logToConsole: 1
+  logInterval: 0.5
 --- !u!1 &1064961127
 GameObject:
   m_ObjectHideFlags: 0

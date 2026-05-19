@@ -36,6 +36,13 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float wallDetachLockTime = 0.4f;
     [SerializeField] private float wallReEngageDelay = 0.15f;
 
+    [Header("Sprint / Momentum")]
+    [SerializeField] private KeyCode sprintKey = KeyCode.LeftShift;
+    [SerializeField] private float maxSprintStamina = 2.5f;     // Total sprint duration in seconds
+    [SerializeField] private float sprintStaminaDrainRate = 1f; // Stamina lost per second while sprinting
+    [SerializeField] private float sprintStaminaRechargeRate = 0.8f; // Stamina gained per second while NOT sprinting
+    [SerializeField] private float sprintSpeedMultiplier = 1.5f; // How much faster while sprinting (1.5x = 50% faster)
+
     [Header("Attack Sync")]
     [SerializeField] private PlayerAttacks playerAttacks;
     [SerializeField] private float attackMoveMultiplier = 0.8f;
@@ -60,11 +67,17 @@ public class PlayerMovement : MonoBehaviour
     private float wallReEngageTimer;
     private int lastWallJumpDir;  // Track which wall direction we jumped from
 
+    private bool isSprinting;
+    private float currentSprintStamina;
+    private bool sprintPressed;
+
     public Transform Weapon;
     private SpriteRenderer GunSprites;
 
     public bool IsGrounded => isGrounded;
     public bool IsDashing => isDashing;
+    public bool IsSprinting => isSprinting;
+    public float SprintStaminaPercent => currentSprintStamina / maxSprintStamina;
     public int FacingDirection => (mySpriteRenderer != null && mySpriteRenderer.flipX) ? -1 : 1;
 
     private void Awake()
@@ -79,6 +92,9 @@ public class PlayerMovement : MonoBehaviour
 
         if (Weapon != null)
             GunSprites = Weapon.GetComponent<SpriteRenderer>();
+
+        currentSprintStamina = maxSprintStamina;
+        isSprinting = false;
     }
 
     private void Update()
@@ -90,6 +106,20 @@ public class PlayerMovement : MonoBehaviour
         if (jumpPressed)
             lastJumpPressedTime = Time.time;
         jumpHeld = Input.GetButton("Jump");
+
+        // Sprint input: press to toggle, press again to stop early
+        sprintPressed = Input.GetKeyDown(sprintKey);
+        if (sprintPressed && isGrounded)
+        {
+            if (isSprinting)
+            {
+                isSprinting = false;  // Press again to stop early
+            }
+            else if (currentSprintStamina > 0f)
+            {
+                isSprinting = true;   // Start sprinting if we have stamina
+            }
+        }
 
         if (inputX < -0.01f)
         {
@@ -114,6 +144,7 @@ public class PlayerMovement : MonoBehaviour
             wallReEngageTimer -= Time.fixedDeltaTime;
 
         CheckGrounded();
+        UpdateSprintStamina();
         UpdateLocomotionStateForCombat();
         HandleHorizontalMovement();
         HandleJump();
@@ -123,13 +154,43 @@ public class PlayerMovement : MonoBehaviour
         jumpPressed = false;
     }
 
+    private void UpdateSprintStamina()
+    {
+        if (isSprinting && isGrounded)
+        {
+            // Drain stamina while sprinting
+            currentSprintStamina -= sprintStaminaDrainRate * Time.fixedDeltaTime;
+            
+            // Stop sprinting if out of stamina
+            if (currentSprintStamina <= 0f)
+            {
+                currentSprintStamina = 0f;
+                isSprinting = false;
+            }
+        }
+        else
+        {
+            // Recharge stamina when not sprinting
+            currentSprintStamina += sprintStaminaRechargeRate * Time.fixedDeltaTime;
+            currentSprintStamina = Mathf.Min(currentSprintStamina, maxSprintStamina);
+        }
+
+        // Auto-stop sprint if airborne
+        if (!isGrounded)
+        {
+            isSprinting = false;
+        }
+    }
+
     private void UpdateLocomotionStateForCombat()
     {
+        // Check if we're moving fast enough and in the right direction to trigger dash attack
         bool hasDashInput = Mathf.Abs(inputX) >= dashInputThreshold;
         bool movingFastEnough = Mathf.Abs(rb.linearVelocity.x) >= dashSpeedThreshold;
         bool movingInInputDir = hasDashInput && Mathf.Sign(rb.linearVelocity.x) == Mathf.Sign(inputX);
 
-        isDashing = isGrounded && movingFastEnough && movingInInputDir;
+        // Dash is triggered by sprint momentum or moving fast enough while sprinting
+        isDashing = isGrounded && movingFastEnough && movingInInputDir && isSprinting;
 
         if (playerAttacks != null)
         {
@@ -241,7 +302,9 @@ public class PlayerMovement : MonoBehaviour
         if (playerAttacks != null && playerAttacks.IsAttacking && isGrounded)
             attackMultiplier = attackMoveMultiplier;
 
-        float targetSpeed = inputX * maxRunSpeed * attackMultiplier;
+        // Apply sprint multiplier to max speed
+        float speedMultiplier = isSprinting && isGrounded ? sprintSpeedMultiplier : 1f;
+        float targetSpeed = inputX * maxRunSpeed * speedMultiplier * attackMultiplier;
         float currentSpeed = rb.linearVelocity.x;
         float speedDiff = targetSpeed - currentSpeed;
 
@@ -269,8 +332,9 @@ public class PlayerMovement : MonoBehaviour
             rb.linearVelocity = new Vector2(newX, rb.linearVelocity.y);
         }
 
-        // Clamp to maxRunSpeed
-        float clampedX = Mathf.Clamp(rb.linearVelocity.x, -maxRunSpeed, maxRunSpeed);
+        // Clamp to maxRunSpeed (accounting for sprint multiplier)
+        float maxSpeed = maxRunSpeed * speedMultiplier;
+        float clampedX = Mathf.Clamp(rb.linearVelocity.x, -maxSpeed, maxSpeed);
         rb.linearVelocity = new Vector2(clampedX, rb.linearVelocity.y);
     }
 
